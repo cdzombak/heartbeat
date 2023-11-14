@@ -1,6 +1,6 @@
 # heartbeat
 
-Simple HTTP heartbeat implementation for Golang. This implementation work particularly well with [Uptime Kuma](https://github.com/louislam/uptime-kuma)'s push monitors.
+Simple HTTP heartbeat implementation for Golang. This implementation works particularly well with [Uptime Kuma](https://github.com/louislam/uptime-kuma)'s push monitors.
 
 ## Installation
 
