@@ -1,8 +1,10 @@
 package heartbeat
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sync"
 	"time"
@@ -41,12 +43,15 @@ func NewHeartbeat(cfg *Config) (Heartbeat, error) {
 		clientTimeout = cfg.HeartbeatInterval
 	}
 
+	client := http.DefaultClient
+	client.Timeout = clientTimeout
+
 	return &heartbeat{
 		livenessThreshold: cfg.LivenessThreshold,
 		heartbeatInterval: cfg.HeartbeatInterval,
 		heartbeatURL:      cfg.HeartbeatURL,
 		onError:           cfg.OnError,
-		client:            http.Client{Timeout: clientTimeout},
+		client:            client,
 	}, nil
 }
 
@@ -62,7 +67,7 @@ type heartbeat struct {
 	livenessThreshold time.Duration
 	heartbeatURL      string
 	lastAlive         time.Time
-	client            http.Client
+	client            *http.Client
 	onError           func(error)
 	started           bool
 	mu                sync.Mutex
@@ -102,14 +107,37 @@ func (h *heartbeat) runLocked() {
 			if sendHeartbeat {
 				resp, err := h.client.Get(h.heartbeatURL)
 				if err != nil {
-					err = fmt.Errorf("failed to send heartbeat to '%s': %v", h.heartbeatURL, err)
+					err = fmt.Errorf("heartbeat to '%s' failed: %v", h.heartbeatURL, err)
 				} else if resp.StatusCode < 200 || resp.StatusCode > 299 {
-					err = fmt.Errorf("failed to send heartbeat to '%s': %s", h.heartbeatURL, resp.Status)
+					err = fmt.Errorf("heartbeat to '%s' failed: %s", h.heartbeatURL, resp.Status)
 				}
+				if err != nil && h.onError != nil {
+					go h.onError(err)
+					continue
+				}
+
+				bodyBytes, err := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				if err != nil {
+					continue
+				}
+
+				var ukRespBody uptimeKumaPushResp
+				if err = json.Unmarshal(bodyBytes, &ukRespBody); err == nil && !ukRespBody.OK {
+					err = fmt.Errorf("heartbeat to '%s' failed: %s", h.heartbeatURL, ukRespBody.Msg)
+				} else {
+					err = nil
+				}
+
 				if err != nil && h.onError != nil {
 					go h.onError(err)
 				}
 			}
 		}
 	}()
+}
+
+type uptimeKumaPushResp struct {
+	OK  bool   `json:"ok"`
+	Msg string `json:"msg"`
 }
