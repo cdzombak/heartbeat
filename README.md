@@ -1,4 +1,6 @@
-# heartbeat
+# `github.com/cdzombak/heartbeat`
+
+[![Go Reference](https://pkg.go.dev/badge/github.com/cdzombak/heartbeat.svg)](https://pkg.go.dev/github.com/cdzombak/heartbeat)
 
 Simple HTTP heartbeat implementation for Golang. This implementation works particularly well with [Uptime Kuma](https://github.com/louislam/uptime-kuma)'s push monitors.
 
