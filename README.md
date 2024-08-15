@@ -2,7 +2,7 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/cdzombak/heartbeat.svg)](https://pkg.go.dev/github.com/cdzombak/heartbeat)
 
-Simple HTTP heartbeat implementation for Golang. This implementation works particularly well with [Uptime Kuma](https://github.com/louislam/uptime-kuma)'s push monitors.
+Simple HTTP heartbeat & health server implementation for Golang. This implementation works particularly well with [Uptime Kuma](https://github.com/louislam/uptime-kuma)'s push monitors.
 
 ## Installation
 
@@ -19,6 +19,7 @@ hb, err = NewHeartbeat(&HeartbeatConfig{
     HeartbeatInterval: 30 * time.Second,
     LivenessThreshold: 60 * time.Second,
     HeartbeatURL:      "https://uptimekuma.example.com:9001/api/push/1234abcd?status=up&msg=OK&ping=",
+	Port:              8888,
     OnError: func(err error) {
         log.Printf("heartbeat error: %s", err)
     },
