@@ -10,8 +10,6 @@ import (
 	"time"
 )
 
-const maxHeartbeatTimeout = 15 * time.Second
-
 // Config is used to create a Heartbeat client
 type Config struct {
 	// HeartbeatInterval is the interval at which heartbeats are sent. Required.
@@ -21,6 +19,10 @@ type Config struct {
 	// HeartbeatURL is the URL to GET to send a heartbeat. Required.
 	// Redirects will be followed, but the final request must receive an HTTP 2xx response.
 	HeartbeatURL string
+	// HTTPTimeout is an optional timeout for the heartbeat HTTP requests.
+	// If not set, a default timeout of max(HeartbeatInterval - 1 second, 1 second) applies.
+	// If set, it must be less than HeartbeatInterval.
+	HTTPTimeout time.Duration
 	// OnError, if not nil, will be called when an error is encountered while sending a heartbeat. Optional.
 	OnError func(error)
 }
@@ -34,24 +36,28 @@ func NewHeartbeat(cfg *Config) (Heartbeat, error) {
 	if cfg.HeartbeatInterval <= 0.0 {
 		return nil, errors.New("heartbeat interval must be positive")
 	}
+	if cfg.HTTPTimeout != 0 && cfg.HTTPTimeout >= cfg.HeartbeatInterval {
+		return nil, errors.New("timeout must be less than heartbeat interval")
+	}
 	if cfg.HeartbeatURL == "" {
 		return nil, errors.New("heartbeat URL must be set")
 	}
-
-	clientTimeout := maxHeartbeatTimeout
-	if cfg.HeartbeatInterval < maxHeartbeatTimeout {
-		clientTimeout = cfg.HeartbeatInterval
 	}
 
-	client := http.DefaultClient
-	client.Timeout = clientTimeout
+	timeout := cfg.HTTPTimeout
+	if timeout == 0 {
+		timeout = cfg.HeartbeatInterval - time.Second
+		if timeout < time.Second {
+			timeout = time.Second
+		}
+	}
 
 	return &heartbeat{
 		livenessThreshold: cfg.LivenessThreshold,
 		heartbeatInterval: cfg.HeartbeatInterval,
 		heartbeatURL:      cfg.HeartbeatURL,
 		onError:           cfg.OnError,
-		client:            client,
+		client:            &http.Client{Timeout: timeout},
 	}, nil
 }
 
