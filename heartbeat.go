@@ -16,14 +16,16 @@ type Config struct {
 	HeartbeatInterval time.Duration
 	// LivenessThreshold is the maximum time between Alive() calls before heartbeats will be stopped. Required.
 	LivenessThreshold time.Duration
-	// HeartbeatURL is the URL to GET to send a heartbeat. Required.
+	// HeartbeatURL is the URL to GET to send a heartbeat.
 	// Redirects will be followed, but the final request must receive an HTTP 2xx response.
+	// Optional; one of HeartbeatURL or Port must be set.
 	HeartbeatURL string
 	// HTTPTimeout is an optional timeout for the heartbeat HTTP requests.
 	// If not set, a default timeout of max(HeartbeatInterval - 1 second, 1 second) applies.
 	// If set, it must be less than HeartbeatInterval.
 	HTTPTimeout time.Duration
-	// Port is the port to use for the heartbeat HTTP server. Optional.
+	// Port is the port to use for the heartbeat HTTP server.
+	// Optional; one of Port or HeartbeatURL must be set.
 	Port int
 	// OnError, if not nil, will be called when an error is encountered while sending a heartbeat. Optional.
 	OnError func(error)
@@ -41,11 +43,11 @@ func NewHeartbeat(cfg *Config) (Heartbeat, error) {
 	if cfg.HTTPTimeout != 0 && cfg.HTTPTimeout >= cfg.HeartbeatInterval {
 		return nil, errors.New("timeout must be less than heartbeat interval")
 	}
-	if cfg.HeartbeatURL == "" {
-		return nil, errors.New("heartbeat URL must be set")
-	}
 	if cfg.Port < 0 || cfg.Port > 65535 {
 		return nil, errors.New("port must be in the range [0, 65535]")
+	}
+	if cfg.HeartbeatURL == "" && cfg.Port == 0 {
+		return nil, errors.New("heartbeat URL must be set")
 	}
 
 	timeout := cfg.HTTPTimeout
@@ -95,7 +97,7 @@ func (h *heartbeat) Start() {
 	}
 
 	h.started = true
-	h.runLocked()
+	h.startHeartbeatLocked()
 	h.startHttpServerLocked()
 }
 
@@ -117,7 +119,11 @@ func (h *heartbeat) okUnlocked() bool {
 	return time.Since(h.lastAlive) < h.livenessThreshold
 }
 
-func (h *heartbeat) runLocked() {
+func (h *heartbeat) startHeartbeatLocked() {
+	if h.heartbeatURL == "" {
+		return
+	}
+
 	ticker := time.NewTicker(h.heartbeatInterval)
 	go func() {
 		for range ticker.C {
