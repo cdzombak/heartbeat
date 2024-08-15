@@ -23,6 +23,8 @@ type Config struct {
 	// If not set, a default timeout of max(HeartbeatInterval - 1 second, 1 second) applies.
 	// If set, it must be less than HeartbeatInterval.
 	HTTPTimeout time.Duration
+	// Port is the port to use for the heartbeat HTTP server. Optional.
+	Port int
 	// OnError, if not nil, will be called when an error is encountered while sending a heartbeat. Optional.
 	OnError func(error)
 }
@@ -42,6 +44,8 @@ func NewHeartbeat(cfg *Config) (Heartbeat, error) {
 	if cfg.HeartbeatURL == "" {
 		return nil, errors.New("heartbeat URL must be set")
 	}
+	if cfg.Port < 0 || cfg.Port > 65535 {
+		return nil, errors.New("port must be in the range [0, 65535]")
 	}
 
 	timeout := cfg.HTTPTimeout
@@ -58,6 +62,7 @@ func NewHeartbeat(cfg *Config) (Heartbeat, error) {
 		heartbeatURL:      cfg.HeartbeatURL,
 		onError:           cfg.OnError,
 		client:            &http.Client{Timeout: timeout},
+		serverPort:        cfg.Port,
 	}, nil
 }
 
@@ -76,6 +81,7 @@ type heartbeat struct {
 	client            *http.Client
 	onError           func(error)
 	started           bool
+	serverPort        int
 	mu                sync.Mutex
 }
 
@@ -90,6 +96,7 @@ func (h *heartbeat) Start() {
 
 	h.started = true
 	h.runLocked()
+	h.startHttpServerLocked()
 }
 
 // Alive indicates that whatever this heartbeat monitors was alive and functioning
@@ -146,6 +153,35 @@ func (h *heartbeat) runLocked() {
 			if err != nil && h.onError != nil {
 				go h.onError(err)
 			}
+		}
+	}()
+}
+
+func (h *heartbeat) startHttpServerLocked() {
+	if h.serverPort == 0 {
+		return
+	}
+
+	go func() {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet {
+				http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+				return
+			}
+
+			if h.okUnlocked() {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"ok":true}`))
+			} else {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = w.Write([]byte(`{"ok":false}`))
+			}
+		})
+
+		if err := http.ListenAndServe(fmt.Sprintf(":%d", h.serverPort), mux); err != nil && !errors.Is(err, http.ErrServerClosed) && h.onError != nil {
+			go h.onError(err)
+			return
 		}
 	}()
 }
