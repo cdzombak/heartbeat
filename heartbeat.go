@@ -1,10 +1,7 @@
 package heartbeat
 
 import (
-	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"net/http"
 	"sync"
 	"time"
@@ -14,19 +11,24 @@ import (
 type Config struct {
 	// HeartbeatInterval is the interval at which heartbeats are sent. Required.
 	HeartbeatInterval time.Duration
+	
 	// LivenessThreshold is the maximum time between Alive() calls before heartbeats will be stopped. Required.
 	LivenessThreshold time.Duration
+
 	// HeartbeatURL is the URL to GET to send a heartbeat.
 	// Redirects will be followed, but the final request must receive an HTTP 2xx response.
 	// Optional; one of HeartbeatURL or Port must be set.
 	HeartbeatURL string
+
 	// HTTPTimeout is an optional timeout for the heartbeat HTTP requests.
 	// If not set, a default timeout of max(HeartbeatInterval - 1 second, 1 second) applies.
 	// If set, it must be less than HeartbeatInterval.
 	HTTPTimeout time.Duration
+
 	// Port is the port to use for the heartbeat HTTP server.
 	// Optional; one of Port or HeartbeatURL must be set.
 	Port int
+
 	// OnError, if not nil, will be called when an error is encountered while sending a heartbeat. Optional.
 	OnError func(error)
 }
@@ -117,82 +119,4 @@ func (h *heartbeat) okUnlocked() bool {
 	defer h.mu.Unlock()
 
 	return time.Since(h.lastAlive) < h.livenessThreshold
-}
-
-func (h *heartbeat) startHeartbeatLocked() {
-	if h.heartbeatURL == "" {
-		return
-	}
-
-	ticker := time.NewTicker(h.heartbeatInterval)
-	go func() {
-		for range ticker.C {
-			if !h.okUnlocked() {
-				continue
-			}
-			resp, err := h.client.Get(h.heartbeatURL)
-			if err != nil {
-				err = fmt.Errorf("heartbeat to '%s' failed: %v", h.heartbeatURL, err)
-			} else if resp.StatusCode < 200 || resp.StatusCode > 299 {
-				err = fmt.Errorf("heartbeat to '%s' failed: %s", h.heartbeatURL, resp.Status)
-			}
-			if err != nil {
-				if h.onError != nil {
-					go h.onError(err)
-				}
-				continue
-			}
-
-			bodyBytes, err := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			if err != nil {
-				continue
-			}
-
-			var ukRespBody uptimeKumaPushResp
-			if err = json.Unmarshal(bodyBytes, &ukRespBody); err == nil && !ukRespBody.OK {
-				err = fmt.Errorf("heartbeat to '%s' failed: %s", h.heartbeatURL, ukRespBody.Msg)
-			} else {
-				err = nil
-			}
-
-			if err != nil && h.onError != nil {
-				go h.onError(err)
-			}
-		}
-	}()
-}
-
-func (h *heartbeat) startHttpServerLocked() {
-	if h.serverPort == 0 {
-		return
-	}
-
-	go func() {
-		mux := http.NewServeMux()
-		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != http.MethodGet {
-				http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-				return
-			}
-
-			if h.okUnlocked() {
-				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte(`{"ok":true}`))
-			} else {
-				w.WriteHeader(http.StatusServiceUnavailable)
-				_, _ = w.Write([]byte(`{"ok":false}`))
-			}
-		})
-
-		if err := http.ListenAndServe(fmt.Sprintf(":%d", h.serverPort), mux); err != nil && !errors.Is(err, http.ErrServerClosed) && h.onError != nil {
-			go h.onError(err)
-			return
-		}
-	}()
-}
-
-type uptimeKumaPushResp struct {
-	OK  bool   `json:"ok"`
-	Msg string `json:"msg"`
 }
